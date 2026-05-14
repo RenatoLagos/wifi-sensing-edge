@@ -29,8 +29,11 @@ running a TensorRT engine, emitting predictions. It has the CUDA, the RAM
 and the toolchain. The ESP32 does not.
 
 This split is also the productionable split: in a deployed system the ESP32
-would become a custom RF board (smaller, cheaper, lower-power) and the
-"Jetson" would become an embedded SoC with NPU. The boundary stays the same.
+becomes a sensing-aware 802.11bf WiFi 7 chipset (the standard was ratified
+in September 2025, silicon volume is ramping over 2026-2028), and the
+"Jetson" becomes an embedded SoC with NPU. The boundary stays the same;
+both halves get smaller, cheaper, and lower-power without touching the
+ingest/preprocess/inference contract on either side.
 
 ## Data flow
 
@@ -67,15 +70,57 @@ TensorRT FP16 with engine caching and INT8 quantization (where it doesn't
 hurt accuracy) is the difference between "demo on the bench" and "deployed
 sensor". Same model, same accuracy target, very different latency.
 
+## Model approach: fine-tune, do not pretrain
+
+A CSI foundation model trained from scratch needs millions of dollars of
+compute and access to multi-site CSI at a scale a startup cannot collect
+in Year 1. Public foundation models published in 2024-2025 — WiFo-2,
+AM-FM, Tiny-WiFo, WiFo-CF — collapse that problem into a fine-tuning
+exercise. Our path:
+
+1. Start from a published, open-source CSI foundation model checkpoint.
+2. Fine-tune on a task-specific head (presence, breath rate, fall, tremor)
+   with a small per-task dataset captured in our target environments.
+3. Knowledge-distill into a small student model sized for the Nano's
+   memory and latency budget (Tiny-WiFo's approach is directly applicable).
+4. Export ONNX, build a TensorRT engine, deploy.
+
+The classical signal-processing baseline (e.g. `jetson/preprocess/breath_rate`)
+remains in the pipeline as a regression target. Any learned model that does
+not beat the FFT-based baseline on both accuracy and latency is not shipped.
+
+## Why edge inference is the architecture, not an optimization
+
+There is a meaningful regulatory and trust reason on top of the latency and
+cost arguments:
+
+- **GDPR data minimization** (since 2018) makes any cross-border transmission
+  of raw biometric signals a compliance-heavy operation. Keeping raw CSI on
+  the device eliminates the data-flow surface entirely.
+- **EU AI Act** high-risk obligations (general from August 2026,
+  medical-device-specific from August 2027) require transparency, human
+  oversight, and post-market monitoring. All three are materially easier
+  to demonstrate when the only thing crossing the device boundary is a
+  prediction, not a raw sensor stream.
+
+This is why "inference at the edge" appears as a top-level architectural
+constraint and not as a deployment optimization to be relaxed later.
+
 ## Where this becomes a product
 
 The current architecture is the **research prototype**. The product version is:
 
-- A single custom board with an ESP32-class RF frontend and an SoC with NPU
-- A foundation model fine-tuned on multi-site CSI for cross-environment
-  generalization
-- A privacy-preserving update channel (so the model can be improved without
-  sending raw CSI anywhere)
-- Integrations with pharma trial RPM platforms
+- A single integrated unit: an 802.11bf-aware WiFi 7 chipset paired with
+  an embedded NPU SoC, packaged for unobtrusive room install
+- A shared CSI foundation model fine-tuned per facility with on-device
+  adaptation, so cross-environment generalization is solved without
+  retraining centrally
+- A privacy-preserving update channel: model weights flow down, only
+  aggregated evaluation metrics (never raw CSI) flow up
+- Integrations with assisted-living and home-care platforms (EHR-lite,
+  alert routing, nurse-call systems) as the first integration surface
+- Pharma trial RPM as a Year 2-3 expansion target, once a fielded
+  deployment base and an FDA 510(k) clearance support that claim
 
 Until then: ESP32-S3 + Jetson Nano is the cheapest path to credible signal.
+See [positioning.md](positioning.md) for the full market thesis.
