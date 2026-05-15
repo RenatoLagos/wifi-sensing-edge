@@ -1,0 +1,15 @@
+menu "wifi-sensing-edge"
+
+    config WIFI_SSID
+        string "WiFi SSID"
+        default "myssid"
+        help
+            SSID of the 2.4 GHz access point to associate with.
+
+    config WIFI_PASSWORD
+        string "WiFi password"
+        default "mypassword"
+        help
+            Password of the access point.
+
+endmenu
