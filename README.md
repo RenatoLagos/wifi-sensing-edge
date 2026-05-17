@@ -110,8 +110,8 @@ python -m scripts.demo_pipeline --mode breathing --duration 60
 
 ## Portfolio
 
-Featured in my portfolio under **Backend · Edge ML · AI Engineering** — see [renatolagos.com](https://renatolagos.com) and the marketing site at [renatolagos-site.vercel.app](https://renatolagos-site.vercel.app).
+Featured in my portfolio under **Backend · Edge ML · AI Engineering** — see [renatolagos-site.vercel.app](https://renatolagos-site.vercel.app).
 
 ---
 
-**Author**: Renato Lagos · [renatolagos.com](https://renatolagos.com) · Backend / Edge ML / AI Engineer · Berlin
+**Author**: Renato Lagos · Backend / Edge ML / AI Engineer · Berlin
