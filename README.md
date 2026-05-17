@@ -52,19 +52,21 @@ Full detail in [docs/architecture.md](docs/architecture.md).
 
 ## Status
 
-| Component                                | State                                                                                  |
-| ---------------------------------------- | -------------------------------------------------------------------------------------- |
-| Repo scaffold                            | Done (May 14, 2026)                                                                    |
-| CSI ingest module                        | Done — `jetson/ingest/`                                                                |
-| Synthetic CSI simulator                  | Done — `scripts/csi_simulator.py`                                                      |
-| Breath rate estimator (classical FFT)    | Working on synthetic — recovers 18.00 bpm with zero error, 7000× peak/median vs idle  |
-| Test suite                               | 11/11 passing                                                                          |
-| ESP32 firmware                           | Pending hardware arrival                                                               |
-| Real CSI capture + parser validation     | Pending hardware arrival                                                               |
-| Foundation model fine-tune (Tiny-WiFo)   | Backlog                                                                                |
-| Fall detection                           | Backlog                                                                                |
-| Multi-room mesh                          | Backlog                                                                                |
-| FDA 510(k) prep                          | Year 2                                                                                 |
+| Component                                | State                                                                                       |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Repo scaffold                            | Done (May 14, 2026)                                                                         |
+| CSI ingest module                        | Done — `jetson/ingest/`                                                                     |
+| Synthetic CSI simulator                  | Done — `scripts/csi_simulator.py`                                                           |
+| Breath rate estimator (classical FFT)    | Working on synthetic — recovers 18.00 bpm with zero error, 7000× peak/median power ratio    |
+| Motion classifier (idle/presence/movement) | Working on synthetic — `jetson/preprocess/motion.py`                                      |
+| Pipeline + live TUI dashboard            | Done — `jetson/pipeline/` + `scripts/demo_pipeline.py`                                      |
+| ESP32 csi-recv firmware scaffold         | Done — compiles, untested without hardware                                                  |
+| Test suite                               | 27/27 passing                                                                               |
+| Real CSI capture + parser validation     | Pending hardware arrival                                                                    |
+| Foundation model fine-tune (Tiny-WiFo)   | Backlog                                                                                     |
+| Fall detection                           | Backlog                                                                                     |
+| Multi-room mesh                          | Backlog                                                                                     |
+| FDA 510(k) prep                          | Year 2                                                                                      |
 
 ## Vision
 
@@ -85,14 +87,25 @@ tests/      pytest suite
 
 ## Reproducibility
 
-The `jetson/` runtime ships with pinned dependencies and a `scripts/csi_simulator.py` so you can validate the full pipeline (ingest → preprocess → inference → emit) without hardware. The synthetic simulator emits CSI packets statistically matched to the real ESP32 output, so the breath-rate / presence pipelines can be developed end-to-end before the radios arrive.
+The repo ships with a synthetic CSI simulator (`scripts/csi_simulator.py`) that emits packets in the same wire format the ESP32 firmware will use, so the full pipeline (ingest → preprocess → emit) can be exercised end-to-end before any hardware is attached.
 
 ```bash
-# On Jetson (or any Linux box with Python 3.11+):
-cd jetson
+# Any Linux / macOS box with Python 3.10+
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-python -m pytest                              # 11/11
-python scripts/csi_simulator.py --bpm 18 | python jetson/pipeline/runner.py
+
+# Run the test suite
+python -m pytest                                          # 27/27
+
+# Synthetic breath rate demo — recovers 18.00 bpm
+python -m scripts.demo_breath_rate --duration 30
+
+# Motion classifier sweep across simulator modes
+python -m scripts.demo_motion --sweep
+
+# Full live pipeline with TUI dashboard (Ctrl+C to exit)
+python -m scripts.demo_pipeline --mode breathing --duration 60
 ```
 
 ## Portfolio
