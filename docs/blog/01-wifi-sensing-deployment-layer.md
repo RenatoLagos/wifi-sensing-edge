@@ -156,8 +156,8 @@ A deployment-layer company in WiFi sensing looks like:
 
 The pioneers anchored in pharma trial RPM because pharma sponsors will
 pay six figures per device per study to validate a biomarker. The unit
-economics worked for vertical integration. The sales cycle — twelve to
-twenty-four months from first contact to deployed pilot — was tolerable
+economics worked for vertical integration. The sales cycle - twelve to
+twenty-four months from first contact to deployed pilot - was tolerable
 because the deal size justified it.
 
 A deployment-layer company cannot wait twenty-four months for its first
@@ -179,11 +179,16 @@ cannot fake.
 
 I am building exactly this deployment layer. ESP32-S3 plus Jetson Nano,
 with the model and pipeline shaped so that the architecture migrates to
-an integrated 802.11bf-aware unit when the silicon arrives. The first
-detection target is breath rate; the classical FFT baseline already
-recovers eighteen breaths per minute from synthetic CSI with zero error
-and a peak-to-median SNR ratio of about seven thousand. The first real
-capture happens in a week, when the ESP32 hardware arrives.
+an integrated 802.11bf-aware unit when the silicon arrives.
+
+The repo today proves the baseline in the honest order it should be
+proved: first the ingest contract, then the synthetic end-to-end
+pipeline, then the classical estimators, then real hardware validation,
+and only after that learned deployment models. The first detection target
+is breath rate; the classical FFT baseline already recovers eighteen
+breaths per minute from synthetic CSI with zero error and a
+peak-to-median SNR ratio of about seven thousand. Real CSI capture and
+parser validation remain the next hardware-gated milestone.
 
 The repo is open and the docs are honest:
 [github.com/RenatoLagos/wifi-sensing-edge](https://github.com/RenatoLagos/wifi-sensing-edge).
@@ -196,8 +201,7 @@ ones exist.
 I do not know how badly cross-environment domain gap will bite on real
 CSI in real assisted living facilities. The foundation-model approach
 should help, but every previous generation of CSI models cratered when
-moved between rooms. This is the central engineering risk and the next
-six weeks of work will tell me a lot.
+moved between rooms. This is the central engineering risk.
 
 I do not know whether the right business motion is direct-to-facility or
 through care platforms that already have facility distribution. I expect
