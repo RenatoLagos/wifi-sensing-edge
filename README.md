@@ -109,6 +109,9 @@ python -m scripts.demo_pipeline --mode breathing --duration 60
 
 # Live ESP32 ingest over serial (requires hardware + pyserial)
 python -m scripts.demo_pipeline --source serial --serial-port /dev/ttyUSB0 --rate 100
+
+# Capture parseable CSI lines from live serial into a dataset file
+python -m scripts.capture_serial --port /dev/ttyUSB0 --out data/first_capture.csv --duration 30
 ```
 
 ## Portfolio
