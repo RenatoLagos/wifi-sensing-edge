@@ -61,7 +61,7 @@ Full detail in [docs/architecture.md](docs/architecture.md).
 | Motion classifier (idle/presence/movement) | Working on synthetic — `jetson/preprocess/motion.py`                                      |
 | Pipeline + live TUI dashboard            | Done — `jetson/pipeline/` + `scripts/demo_pipeline.py`                                      |
 | ESP32 csi-recv firmware scaffold         | Done — compiles, untested without hardware                                                  |
-| Test suite                               | 27/27 passing                                                                               |
+| Test suite                               | 27 tests in repo; passing status must be re-verified in the active environment              |
 | Real CSI capture + parser validation     | Pending hardware arrival                                                                    |
 | Foundation model fine-tune (Tiny-WiFo)   | Backlog                                                                                     |
 | Fall detection                           | Backlog                                                                                     |
@@ -87,7 +87,7 @@ tests/      pytest suite
 
 ## Reproducibility
 
-The repo ships with a synthetic CSI simulator (`scripts/csi_simulator.py`) that emits packets in the same wire format the ESP32 firmware will use, so the full pipeline (ingest → preprocess → emit) can be exercised end-to-end before any hardware is attached.
+The repo ships with a synthetic CSI simulator (`scripts/csi_simulator.py`) that emits packets in the same wire format the ESP32 firmware will use, so the full pipeline (ingest -> preprocess -> emit) can be exercised end-to-end before any hardware is attached.
 
 ```bash
 # Any Linux / macOS box with Python 3.10+
@@ -96,7 +96,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 # Run the test suite
-python -m pytest                                          # 27/27
+python -m pytest
 
 # Synthetic breath rate demo — recovers 18.00 bpm
 python -m scripts.demo_breath_rate --duration 30

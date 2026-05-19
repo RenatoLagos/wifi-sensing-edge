@@ -40,11 +40,12 @@ ingest/preprocess/inference contract on either side.
 1. ESP32 receives a WiFi packet on channel 6 (2.437 GHz).
 2. `esp-csi` callback fires with the CSI tensor for that packet.
 3. Firmware serializes timestamp + RSSI + CSI subcarriers to UART.
-4. Jetson `ingest/` reads UART, parses, pushes to a ring buffer.
-5. `preprocess/` consumes the buffer, applies filters (Hampel for outliers,
-   bandpass for the band of interest), extracts features.
-6. `inference/` runs the TensorRT engine on the feature tensor.
-7. `pipeline/` emits the prediction over MQTT / WebSocket / local log.
+4. Jetson `ingest/` reads UART, parses, and hands frames to the pipeline.
+5. `pipeline/` builds sliding windows over the most recent CSI frames.
+6. `preprocess/` runs classical estimators over those windows:
+   - FFT-based breath-rate estimation
+   - variance-based motion state estimation
+7. `emitters/` surface results to stdout, JSONL, or the live terminal dashboard.
 
 ## Latency budget
 
@@ -56,14 +57,27 @@ End-to-end target: **<100 ms** from packet RX to prediction emitted.
 | UART transit   | 10 ms    |
 | Jetson parse    | 5 ms    |
 | Preprocess      | 20 ms    |
-| Inference (TRT FP16) | 50 ms |
+| Inference / classification | 50 ms |
 | Emit            | 10 ms    |
 | **Total**       | **100 ms** |
 
-These are targets, not measurements. Real numbers go in `jetson/bench/`
-when we have them.
+These are targets, not measurements. The current repo validates pipeline shape
+and baseline estimators; benchmark artifacts come later.
 
-## Why TensorRT not raw PyTorch
+## Current implementation status
+
+Today's repo does **not** contain a learned model or TensorRT runtime. What is
+implemented now is the baseline needed before any ML claim deserves oxygen:
+
+- a stable ESP32 -> Jetson CSV contract
+- a parser and sliding-window pipeline
+- a breath-rate baseline that works on synthetic data
+- a motion baseline that separates idle / presence / movement on synthetic data
+
+This matters because a learned model without a trustworthy ingest path and a
+classical baseline is just startup cosplay.
+
+## Why TensorRT instead of raw PyTorch later
 
 The Nano can run PyTorch but it leaves 3-5x performance on the table.
 TensorRT FP16 with engine caching and INT8 quantization (where it doesn't
@@ -85,9 +99,9 @@ exercise. Our path:
    memory and latency budget (Tiny-WiFo's approach is directly applicable).
 4. Export ONNX, build a TensorRT engine, deploy.
 
-The classical signal-processing baseline (e.g. `jetson/preprocess/breath_rate`)
-remains in the pipeline as a regression target. Any learned model that does
-not beat the FFT-based baseline on both accuracy and latency is not shipped.
+The classical signal-processing baselines in `jetson/preprocess/` remain the
+regression target. Any learned model that does not beat them on both accuracy
+and latency is not shipped.
 
 ## Why edge inference is the architecture, not an optimization
 
