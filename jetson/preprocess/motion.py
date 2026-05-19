@@ -17,15 +17,17 @@ The thresholds below are calibrated against the synthetic CSI simulator.
 Real CSI will require recalibration — that is one of the things the
 hardware-arrival milestone is for.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
+
 
 import numpy as np
 
 
-class MotionState(StrEnum):
+class MotionState(str, Enum):
     IDLE = "idle"
     PRESENCE = "presence"
     MOVEMENT = "movement"
@@ -62,7 +64,9 @@ def estimate_motion(
 
     n_packets, n_subcarriers = amps.shape
     if n_packets < 2:
-        raise ValueError(f"need at least 2 packets to compute variance, got {n_packets}")
+        raise ValueError(
+            f"need at least 2 packets to compute variance, got {n_packets}"
+        )
     if presence_threshold <= 0 or movement_threshold <= presence_threshold:
         raise ValueError(
             f"invalid thresholds: presence={presence_threshold}, "
