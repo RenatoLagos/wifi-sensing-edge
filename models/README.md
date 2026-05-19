@@ -11,7 +11,8 @@ exports/      Frozen ONNX exports + TensorRT engines (gitignored)
 
 ## What we track in git
 
-- Architecture definitions live in `jetson/inference/`, not here
+- Architecture definitions will live in `jetson/inference/` once learned-model
+  serving exists in the repo
 - Training scripts live in `notebooks/` or `scripts/`
 - Hyperparameter configs (small YAML) can live here
 

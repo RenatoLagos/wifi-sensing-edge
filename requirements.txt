@@ -3,3 +3,4 @@ scipy>=1.10,<2.0
 matplotlib>=3.7,<4.0
 rich>=13.7,<16.0
 pytest>=7.4,<9.0
+pyserial>=3.5,<4.0

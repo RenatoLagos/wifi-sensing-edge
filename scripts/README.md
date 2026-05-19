@@ -1,13 +1,18 @@
 # scripts/
 
-One-off utilities: data capture wrappers, format conversion, benchmark
-runners, sanity checks.
+Runnable entrypoints and one-off utilities for the repo.
+
+Two script shapes are acceptable here:
+
+- Thin entrypoints that exercise code living under `jetson/`
+- Standalone utilities such as data conversion, benchmark runners, and
+  sanity checks
 
 Scripts here should be:
 
-- Single-file Python (no package layout, no imports from `jetson/`)
+- Small and easy to run from the command line
 - Self-documenting via `--help`
-- Idempotent (rerunning does not corrupt state)
+- Safe to rerun without corrupting repo state
 
-If a script grows into something the pipeline depends on, move it under
-`jetson/` and import it properly.
+If reusable logic starts growing inside a script, move that logic under
+`jetson/` and keep the script as a thin CLI wrapper.

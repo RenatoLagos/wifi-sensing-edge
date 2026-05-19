@@ -106,6 +106,9 @@ python -m scripts.demo_motion --sweep
 
 # Full live pipeline with TUI dashboard (Ctrl+C to exit)
 python -m scripts.demo_pipeline --mode breathing --duration 60
+
+# Live ESP32 ingest over serial (requires hardware + pyserial)
+python -m scripts.demo_pipeline --source serial --serial-port /dev/ttyUSB0 --rate 100
 ```
 
 ## Portfolio
