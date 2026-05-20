@@ -84,7 +84,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--port", required=True, help="serial device, e.g. /dev/ttyUSB0")
     p.add_argument("--out", required=True, help="output CSV path")
-    p.add_argument("--baudrate", type=int, default=921600)
+    p.add_argument("--baudrate", type=int, default=115200)
     p.add_argument("--serial-timeout", type=float, default=1.0)
     p.add_argument(
         "--duration", type=float, default=None, help="capture duration in seconds"

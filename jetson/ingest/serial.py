@@ -13,7 +13,7 @@ class BinaryLineSource(Protocol):
 def open_serial_port(
     port: str,
     *,
-    baudrate: int = 921600,
+    baudrate: int = 115200,
     timeout: float = 1.0,
 ):
     try:

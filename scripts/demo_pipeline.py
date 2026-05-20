@@ -9,15 +9,17 @@ Examples:
     python -m scripts.demo_pipeline --emitter stdout --no-realtime
     python -m scripts.demo_pipeline --emitter jsonl > stream.jsonl
     python -m scripts.demo_pipeline --source serial --serial-port /dev/ttyUSB0
+    python -m scripts.demo_pipeline --source capture --capture-file data/clean_capture_64.csv --rate 12.5 --emitter stdout
 """
 
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 import sys
 import time
 
-from jetson.ingest import iter_serial_frames, open_serial_port, parse_line
+from jetson.ingest import iter_serial_frames, open_serial_port, parse_line, parse_stream
 from jetson.pipeline import (
     JSONLinesEmitter,
     LiveDashboardEmitter,
@@ -71,21 +73,51 @@ def _iter_live_serial_frames(
         yield from iter_serial_frames(conn, strict=strict)
 
 
+def _iter_capture_frames(*, path: str, strict: bool):
+    with Path(path).open(encoding="utf-8") as source:
+        yield from parse_stream(source, strict=strict)
+
+
+def _iter_subcarrier_filtered_frames(frames, *, expected_subcarriers: int | None):
+    for frame in frames:
+        if (
+            expected_subcarriers is None
+            or frame.num_subcarriers == expected_subcarriers
+        ):
+            yield frame
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--source", choices=["simulator", "serial"], default="simulator")
+    p.add_argument(
+        "--source", choices=["simulator", "serial", "capture"], default="simulator"
+    )
     p.add_argument("--mode", choices=csi_simulator.MODES, default="breathing")
     p.add_argument("--rate", type=float, default=100.0)
     p.add_argument("--duration", type=float, default=60.0)
     p.add_argument("--subcarriers", type=int, default=52)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--serial-port", type=str, default=None)
-    p.add_argument("--baudrate", type=int, default=921600)
+    p.add_argument("--capture-file", type=str, default=None)
+    p.add_argument("--baudrate", type=int, default=115200)
     p.add_argument("--serial-timeout", type=float, default=1.0)
     p.add_argument(
-        "--strict-serial",
+        "--subcarrier-filter",
+        type=int,
+        default=None,
+        help="drop frames whose subcarrier count does not match this value",
+    )
+    p.add_argument(
+        "--strict-input",
+        dest="strict_input",
         action="store_true",
-        help="fail on malformed serial lines instead of skipping them",
+        help="fail on malformed serial or capture lines instead of skipping them",
+    )
+    p.add_argument(
+        "--strict-serial",
+        dest="strict_input",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
     p.add_argument(
         "--emitter",
@@ -101,6 +133,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.source == "serial" and not args.serial_port:
         p.error("--serial-port is required when --source serial")
+    if args.source == "capture" and not args.capture_file:
+        p.error("--capture-file is required when --source capture")
 
     pipeline = Pipeline(
         sample_rate_hz=args.rate,
@@ -118,13 +152,20 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             realtime=realtime,
         )
-    else:
+    elif args.source == "serial":
         frames = _iter_live_serial_frames(
             port=args.serial_port,
             baudrate=args.baudrate,
             timeout=args.serial_timeout,
-            strict=args.strict_serial,
+            strict=args.strict_input,
         )
+    else:
+        frames = _iter_capture_frames(path=args.capture_file, strict=args.strict_input)
+
+    frames = _iter_subcarrier_filtered_frames(
+        frames,
+        expected_subcarriers=args.subcarrier_filter,
+    )
 
     if args.emitter == "dashboard":
         with LiveDashboardEmitter() as dash:
