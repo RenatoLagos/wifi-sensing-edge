@@ -21,6 +21,8 @@ from .tracking import PoseTrack, PoseTracker
 @dataclass(frozen=True)
 class VisualizerConfig:
     camera_index: int
+    video_file: str | None
+    pose_model: str | None
     width: int
     height: int
     telemetry_host: str
@@ -28,6 +30,8 @@ class VisualizerConfig:
     privacy_mode: str
     max_telemetry_age_ms: float
     max_fusion_skew_ms: float
+    headless: bool
+    max_frames: int | None
 
 
 def _load_cv2():
@@ -164,26 +168,35 @@ def run_visualizer(config: VisualizerConfig) -> int:
         port=config.telemetry_port,
         on_sample=buffer.add,
     )
-    tracker = PoseTracker()
-    capture = cv2.VideoCapture(config.camera_index)
-    capture.set(cv2.CAP_PROP_FRAME_WIDTH, config.width)
-    capture.set(cv2.CAP_PROP_FRAME_HEIGHT, config.height)
+    tracker = PoseTracker(model_path=config.pose_model)
+    if config.video_file is not None:
+        capture = cv2.VideoCapture(config.video_file)
+        source_desc = f"video file {config.video_file}"
+    else:
+        capture = cv2.VideoCapture(config.camera_index)
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, config.width)
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, config.height)
+        source_desc = f"camera index {config.camera_index}"
 
     if not capture.isOpened():
+        capture.release()
         tracker.close()
-        raise RuntimeError(f"could not open camera index {config.camera_index}")
+        raise RuntimeError(f"could not open {source_desc}")
 
     server.start()
     window_name = "wifi-sensing camera-assisted demo"
+    frames_processed = 0
     try:
         while True:
             ok, frame = capture.read()
             if not ok:
+                if config.video_file is not None:
+                    break
                 time.sleep(0.01)
                 continue
             frame = cv2.flip(frame, 1)
             frame_local_us = time.monotonic_ns() // 1_000
-            track = tracker.process(frame)
+            track = tracker.process(frame, timestamp_ms=frame_local_us // 1_000)
             fused = buffer.match(
                 frame_local_us,
                 max_age_ms=config.max_telemetry_age_ms,
@@ -197,21 +210,41 @@ def run_visualizer(config: VisualizerConfig) -> int:
                 status=server.status(),
                 privacy_mode=config.privacy_mode,
             )
+            frames_processed += 1
+            if config.headless:
+                if (
+                    config.max_frames is not None
+                    and frames_processed >= config.max_frames
+                ):
+                    break
+                continue
+
             cv2.imshow(window_name, rendered)
             key = cv2.waitKey(1) & 0xFF
             if key in (27, ord("q")):
                 break
     finally:
+        final_status = server.status()
         server.stop()
         tracker.close()
         capture.release()
-        cv2.destroyAllWindows()
+        if not config.headless:
+            cv2.destroyAllWindows()
+    if config.headless:
+        print(
+            "headless run complete "
+            f"frames={frames_processed} "
+            f"samples={final_status.samples_received} "
+            f"parse_errors={final_status.parse_errors}"
+        )
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--camera-index", type=int, default=0)
+    parser.add_argument("--video-file", type=str, default=None)
+    parser.add_argument("--pose-model", type=str, default=None)
     parser.add_argument("--width", type=int, default=960)
     parser.add_argument("--height", type=int, default=540)
     parser.add_argument("--telemetry-host", type=str, default="0.0.0.0")
@@ -223,9 +256,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--max-telemetry-age-ms", type=float, default=1500.0)
     parser.add_argument("--max-fusion-skew-ms", type=float, default=250.0)
+    parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--max-frames", type=int, default=None)
     args = parser.parse_args(argv)
+    if args.max_frames is not None and args.max_frames <= 0:
+        parser.error("--max-frames must be > 0")
     config = VisualizerConfig(
         camera_index=args.camera_index,
+        video_file=args.video_file,
+        pose_model=args.pose_model,
         width=args.width,
         height=args.height,
         telemetry_host=args.telemetry_host,
@@ -233,5 +272,7 @@ def main(argv: list[str] | None = None) -> int:
         privacy_mode=args.privacy_mode,
         max_telemetry_age_ms=args.max_telemetry_age_ms,
         max_fusion_skew_ms=args.max_fusion_skew_ms,
+        headless=args.headless,
+        max_frames=args.max_frames,
     )
     return run_visualizer(config)

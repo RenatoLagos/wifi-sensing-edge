@@ -26,6 +26,7 @@ data/captures/
 
 models/checkpoints/
 models/exports/
+models/*.task
 *.pth
 *.pt
 *.onnx
