@@ -1,16 +1,19 @@
 """Pipeline result emitters.
 
 An emitter is anything that consumes a `PipelineResult` and surfaces it
-somewhere. Three implementations:
+somewhere. Four implementations:
 
   StdoutEmitter         — one human-readable line per result
   JSONLinesEmitter      — one JSON object per result (pipe-friendly)
+  TCPSocketEmitter      — one JSON object per result over a TCP socket
   LiveDashboardEmitter  — full-screen rich terminal dashboard, in-place
-                          updates, includes a motion-score sparkline
+                           updates, includes a motion-score sparkline
 """
+
 from __future__ import annotations
 
 import json
+import socket
 import sys
 from collections import deque
 from typing import IO, Optional, Protocol
@@ -21,6 +24,20 @@ from jetson.pipeline.orchestrator import PipelineResult
 class Emitter(Protocol):
     def emit(self, result: PipelineResult) -> None: ...
     def close(self) -> None: ...
+
+
+def pipeline_result_to_payload(result: PipelineResult) -> dict[str, object | None]:
+    return {
+        "timestamp_us": result.timestamp_us,
+        "breath_rate_bpm": (
+            result.breath_rate.rate_bpm if result.breath_rate else None
+        ),
+        "breath_confidence": (
+            result.breath_rate.confidence if result.breath_rate else None
+        ),
+        "motion_state": result.motion.state.value if result.motion else None,
+        "motion_score": result.motion.motion_score if result.motion else None,
+    }
 
 
 class StdoutEmitter:
@@ -48,26 +65,37 @@ class JSONLinesEmitter:
         self._stream = stream
 
     def emit(self, result: PipelineResult) -> None:
-        payload = {
-            "timestamp_us": result.timestamp_us,
-            "breath_rate_bpm": (
-                result.breath_rate.rate_bpm if result.breath_rate else None
-            ),
-            "breath_confidence": (
-                result.breath_rate.confidence if result.breath_rate else None
-            ),
-            "motion_state": (
-                result.motion.state.value if result.motion else None
-            ),
-            "motion_score": (
-                result.motion.motion_score if result.motion else None
-            ),
-        }
-        self._stream.write(json.dumps(payload) + "\n")
+        self._stream.write(json.dumps(pipeline_result_to_payload(result)) + "\n")
         self._stream.flush()
 
     def close(self) -> None:
         self._stream.flush()
+
+
+class TCPSocketEmitter:
+    def __init__(
+        self,
+        *,
+        host: str,
+        port: int,
+        connect_timeout: float = 5.0,
+    ) -> None:
+        self._sock = socket.create_connection((host, port), timeout=connect_timeout)
+        try:
+            self._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except OSError:
+            pass
+        self._stream = self._sock.makefile("w", encoding="utf-8", newline="\n")
+
+    def emit(self, result: PipelineResult) -> None:
+        self._stream.write(json.dumps(pipeline_result_to_payload(result)) + "\n")
+        self._stream.flush()
+
+    def close(self) -> None:
+        try:
+            self._stream.close()
+        finally:
+            self._sock.close()
 
 
 class LiveDashboardEmitter:
