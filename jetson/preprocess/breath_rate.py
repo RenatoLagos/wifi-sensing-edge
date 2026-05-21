@@ -6,11 +6,14 @@ to beat it on accuracy AND latency.
 
 Pipeline:
   1. Per-subcarrier linear detrend (remove DC + drift).
-  2. Real FFT per subcarrier; in-band power scores each subcarrier's SNR.
-  3. Combine top-K subcarriers (highest in-band power) by PSD summation.
-  4. Locate dominant peak in the breathing band.
-  5. Convert peak frequency to bpm. Report confidence = peak / in-band median.
+  2. Bandpass to the respiration band.
+  3. Welch PSD per subcarrier for a more stable spectrum on noisy real data.
+  4. Score subcarriers by peak sharpness, not raw in-band energy.
+  5. Find the dominant frequency cluster across subcarriers.
+  6. Combine only subcarriers that agree with that cluster.
+  7. Locate the dominant peak and convert it to bpm.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -25,6 +28,13 @@ class BreathRateEstimate:
     frequency_hz: float
     confidence: float
     n_subcarriers_used: int
+
+
+def _parabolic_peak_offset(y0: float, y1: float, y2: float) -> float:
+    denom = y0 - 2.0 * y1 + y2
+    if abs(denom) < 1e-12:
+        return 0.0
+    return 0.5 * (y0 - y2) / denom
 
 
 def estimate_breath_rate(
@@ -70,8 +80,31 @@ def estimate_breath_rate(
 
     detrended = _scipy_signal.detrend(amps.astype(np.float64), axis=0, type="linear")
 
-    freqs = np.fft.rfftfreq(n_packets, d=1.0 / sample_rate_hz)
-    spectra = np.abs(np.fft.rfft(detrended, axis=0)) ** 2  # shape (n_freqs, n_subcarriers)
+    sos = _scipy_signal.butter(
+        2,
+        [low_hz, high_hz],
+        btype="bandpass",
+        fs=sample_rate_hz,
+        output="sos",
+    )
+    filtered = _scipy_signal.sosfiltfilt(sos, detrended, axis=0)
+    valid_subcarrier_mask = filtered.std(axis=0) > 1e-6
+    if not valid_subcarrier_mask.any():
+        raise ValueError("all subcarriers are near-constant after bandpass filtering")
+    filtered = filtered[:, valid_subcarrier_mask]
+
+    nperseg = min(n_packets, max(64, int(sample_rate_hz * 20.0)))
+    noverlap = nperseg // 2
+    freqs, spectra = _scipy_signal.welch(
+        filtered,
+        fs=sample_rate_hz,
+        window="hann",
+        nperseg=nperseg,
+        noverlap=noverlap,
+        detrend=False,
+        scaling="spectrum",
+        axis=0,
+    )
 
     band_mask = (freqs >= low_hz) & (freqs <= high_hz)
     if not band_mask.any():
@@ -80,18 +113,57 @@ def estimate_breath_rate(
             f"{sample_rate_hz / n_packets:.4f} Hz"
         )
 
-    in_band_power_per_sub = spectra[band_mask].sum(axis=0)
-    k = int(min(top_k_subcarriers, n_subcarriers))
-    top_idx = np.argsort(in_band_power_per_sub)[-k:]
-    combined = spectra[:, top_idx].sum(axis=1)
+    in_band_per_sub = spectra[band_mask]
+    per_sub_median = np.maximum(np.median(in_band_per_sub, axis=0), 1e-12)
+    normalized_in_band = in_band_per_sub / per_sub_median
+    peak_bin_per_sub = np.argmax(normalized_in_band, axis=0)
+    peak_ratio_per_sub = normalized_in_band[
+        peak_bin_per_sub, np.arange(normalized_in_band.shape[1])
+    ]
+    peak_weights = np.maximum(peak_ratio_per_sub - 1.0, 0.0)
+    if float(peak_weights.sum()) <= 1e-12:
+        peak_weights = peak_ratio_per_sub
 
-    in_band_combined = combined[band_mask]
+    dominant_bin_weights = np.bincount(
+        peak_bin_per_sub,
+        weights=peak_weights,
+        minlength=normalized_in_band.shape[0],
+    )
+    dominant_bin = int(np.argmax(dominant_bin_weights))
+    consensus_mask = np.abs(peak_bin_per_sub - dominant_bin) <= 1
+
+    candidate_scores = peak_ratio_per_sub.copy()
+    candidate_scores[~consensus_mask] = -np.inf
+    finite_idx = np.flatnonzero(np.isfinite(candidate_scores))
+    if finite_idx.size == 0:
+        finite_idx = np.arange(peak_ratio_per_sub.size)
+        candidate_scores = peak_ratio_per_sub
+
+    k = int(min(top_k_subcarriers, finite_idx.size))
+    top_idx = np.argsort(candidate_scores)[-k:]
+    selected_in_band = normalized_in_band[:, top_idx]
+    combined_in_band = selected_in_band.mean(axis=1)
+
+    in_band_combined = combined_in_band
     in_band_freqs = freqs[band_mask]
     peak_idx = int(np.argmax(in_band_combined))
-    peak_freq = float(in_band_freqs[peak_idx])
     peak_power = float(in_band_combined[peak_idx])
     median_in_band = float(np.median(in_band_combined))
     confidence = peak_power / max(median_in_band, 1e-12)
+
+    total_cluster_weight = float(dominant_bin_weights.sum())
+    if total_cluster_weight > 1e-12:
+        confidence *= float(dominant_bin_weights[dominant_bin]) / total_cluster_weight
+
+    peak_freq = float(in_band_freqs[peak_idx])
+    if 0 < peak_idx < len(in_band_combined) - 1:
+        bin_width = float(in_band_freqs[1] - in_band_freqs[0])
+        offset = _parabolic_peak_offset(
+            float(in_band_combined[peak_idx - 1]),
+            float(in_band_combined[peak_idx]),
+            float(in_band_combined[peak_idx + 1]),
+        )
+        peak_freq += float(np.clip(offset, -1.0, 1.0)) * bin_width
 
     return BreathRateEstimate(
         rate_bpm=peak_freq * 60.0,
