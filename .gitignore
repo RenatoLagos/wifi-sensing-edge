@@ -60,3 +60,6 @@ node_modules/
 
 docs/private/
 notes/private/
+
+# Local tooling metadata
+.atl/
