@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import socket
+import time
 from threading import Thread
 
 from jetson.pipeline import PipelineResult, TCPSocketEmitter
@@ -83,6 +84,9 @@ def test_tcp_socket_emitter_streams_one_json_payload():
     worker.start()
 
     emitter = TCPSocketEmitter(host=host, port=port)
+    deadline = time.monotonic() + 2.0
+    while not emitter.stats().connected and time.monotonic() < deadline:
+        time.sleep(0.005)
     result = PipelineResult(
         timestamp_us=123,
         breath_rate=BreathRateEstimate(

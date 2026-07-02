@@ -16,6 +16,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 import sys
 import time
@@ -29,6 +30,8 @@ from jetson.pipeline import (
     TCPSocketEmitter,
 )
 from scripts import csi_simulator
+
+logger = logging.getLogger(__name__)
 
 
 def _iter_simulator_frames(
@@ -135,6 +138,11 @@ def main(argv: list[str] | None = None) -> int:
         help="run as fast as possible (default: dashboard paces to wall clock)",
     )
     args = p.parse_args(argv)
+    logging.basicConfig(
+        level=logging.INFO,
+        stream=sys.stderr,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
 
     if args.source == "serial" and not args.serial_port:
         p.error("--serial-port is required when --source serial")
@@ -198,6 +206,9 @@ def main(argv: list[str] | None = None) -> int:
             if result is not None:
                 emitter.emit(result)
     finally:
+        stats_fn = getattr(emitter, "stats", None)
+        if callable(stats_fn):
+            logger.info("emitter stats: %s", stats_fn())
         emitter.close()
     return 0
 

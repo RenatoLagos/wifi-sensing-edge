@@ -76,6 +76,8 @@ def _status() -> TelemetryServerStatus:
         host="0.0.0.0",
         port=8765,
         connected=True,
+        connections_accepted=1,
+        disconnects=0,
         samples_received=6,
         parse_errors=0,
         last_sample_monotonic_us=1,

@@ -23,6 +23,8 @@ class TelemetryServerStatus:
     host: str
     port: int
     connected: bool
+    connections_accepted: int
+    disconnects: int
     samples_received: int
     parse_errors: int
     last_sample_monotonic_us: int | None
@@ -76,6 +78,8 @@ class TelemetryServer:
         self._listener: socket.socket | None = None
         self._lock = Lock()
         self._connected = False
+        self._connections_accepted = 0
+        self._disconnects = 0
         self._samples_received = 0
         self._parse_errors = 0
         self._last_sample_monotonic_us: int | None = None
@@ -104,6 +108,8 @@ class TelemetryServer:
                 host=self._host,
                 port=self._port,
                 connected=self._connected,
+                connections_accepted=self._connections_accepted,
+                disconnects=self._disconnects,
                 samples_received=self._samples_received,
                 parse_errors=self._parse_errors,
                 last_sample_monotonic_us=self._last_sample_monotonic_us,
@@ -128,9 +134,11 @@ class TelemetryServer:
                         self._set_error(str(exc))
                         continue
                     with conn:
-                        self._set_connected(True)
-                        self._serve_connection(conn)
-                        self._set_connected(False)
+                        self._register_connect()
+                        try:
+                            self._serve_connection(conn)
+                        finally:
+                            self._register_disconnect()
         except OSError as exc:
             if not self._stop_event.is_set():
                 self._set_error(str(exc))
@@ -139,33 +147,51 @@ class TelemetryServer:
             self._set_connected(False)
 
     def _serve_connection(self, conn: socket.socket) -> None:
+        # Raw recv with manual line splitting: unlike makefile readers, a
+        # recv timeout consumes no data and the socket stays readable, so an
+        # idle link can be polled without tearing down the connection.
         conn.settimeout(0.5)
-        with conn.makefile("r", encoding="utf-8") as stream:
-            while not self._stop_event.is_set():
-                try:
-                    line = stream.readline()
-                except OSError as exc:
-                    self._set_error(str(exc))
-                    return
-                if not line:
-                    return
-                received_monotonic_us = time.monotonic_ns() // 1_000
-                try:
-                    payload = json.loads(line)
-                    if not isinstance(payload, dict):
-                        raise ValueError("payload must be a JSON object")
-                    sample = parse_telemetry_payload(
-                        payload,
-                        received_monotonic_us=received_monotonic_us,
-                    )
-                except (json.JSONDecodeError, ValueError) as exc:
-                    self._increment_parse_errors(str(exc))
-                    continue
-                self._on_sample(sample)
-                with self._lock:
-                    self._samples_received += 1
-                    self._last_sample_monotonic_us = received_monotonic_us
-                    self._last_error = None
+        buffer = b""
+        while not self._stop_event.is_set():
+            try:
+                chunk = conn.recv(4096)
+            except TimeoutError:
+                # An idle link is healthy; keep waiting for the next line.
+                continue
+            except OSError as exc:
+                self._set_error(str(exc))
+                return
+            if not chunk:
+                if buffer:
+                    self._handle_payload_line(buffer)
+                return
+            buffer += chunk
+            while True:
+                line, newline, rest = buffer.partition(b"\n")
+                if not newline:
+                    buffer = line
+                    break
+                buffer = rest
+                self._handle_payload_line(line)
+
+    def _handle_payload_line(self, line: bytes) -> None:
+        received_monotonic_us = time.monotonic_ns() // 1_000
+        try:
+            payload = json.loads(line)
+            if not isinstance(payload, dict):
+                raise ValueError("payload must be a JSON object")
+            sample = parse_telemetry_payload(
+                payload,
+                received_monotonic_us=received_monotonic_us,
+            )
+        except (json.JSONDecodeError, ValueError) as exc:
+            self._increment_parse_errors(str(exc))
+            return
+        self._on_sample(sample)
+        with self._lock:
+            self._samples_received += 1
+            self._last_sample_monotonic_us = received_monotonic_us
+            self._last_error = None
 
     def _increment_parse_errors(self, message: str) -> None:
         with self._lock:
@@ -175,6 +201,16 @@ class TelemetryServer:
     def _set_connected(self, connected: bool) -> None:
         with self._lock:
             self._connected = connected
+
+    def _register_connect(self) -> None:
+        with self._lock:
+            self._connected = True
+            self._connections_accepted += 1
+
+    def _register_disconnect(self) -> None:
+        with self._lock:
+            self._connected = False
+            self._disconnects += 1
 
     def _set_error(self, message: str) -> None:
         with self._lock:

@@ -13,12 +13,18 @@ somewhere. Four implementations:
 from __future__ import annotations
 
 import json
+import logging
+import random
 import socket
 import sys
 from collections import deque
+from dataclasses import dataclass
+from threading import Event, Lock, Thread
 from typing import IO, Optional, Protocol
 
 from jetson.pipeline.orchestrator import PipelineResult
+
+logger = logging.getLogger(__name__)
 
 
 class Emitter(Protocol):
@@ -72,30 +78,209 @@ class JSONLinesEmitter:
         self._stream.flush()
 
 
+@dataclass(frozen=True)
+class TCPSocketEmitterStats:
+    connected: bool
+    connect_attempts: int
+    reconnects: int
+    dropped_results: int
+    last_backoff_s: float
+
+
 class TCPSocketEmitter:
+    """Streams pipeline results as JSON lines over TCP.
+
+    Transport failures never propagate into the pipeline loop. A background
+    connector thread owns all DNS and connect work and applies exponential
+    backoff between failed attempts, so `emit` never connects and never
+    blocks: results produced while disconnected are dropped and counted
+    (stale live telemetry has no replay value). Link transitions are logged
+    once per state change, never per dropped result.
+    """
+
     def __init__(
         self,
         *,
         host: str,
         port: int,
         connect_timeout: float = 5.0,
+        reconnect_initial_delay_s: float = 0.5,
+        reconnect_backoff_multiplier: float = 2.0,
+        reconnect_max_delay_s: float = 15.0,
+        reconnect_jitter_s: float = 0.1,
     ) -> None:
-        self._sock = socket.create_connection((host, port), timeout=connect_timeout)
-        try:
-            self._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        except OSError:
-            pass
-        self._stream = self._sock.makefile("w", encoding="utf-8", newline="\n")
+        if reconnect_initial_delay_s <= 0:
+            raise ValueError(
+                "reconnect_initial_delay_s must be > 0, "
+                f"got {reconnect_initial_delay_s}"
+            )
+        if reconnect_backoff_multiplier < 1.0:
+            raise ValueError(
+                "reconnect_backoff_multiplier must be >= 1, "
+                f"got {reconnect_backoff_multiplier}"
+            )
+        if reconnect_max_delay_s < reconnect_initial_delay_s:
+            raise ValueError(
+                "reconnect_max_delay_s must be >= reconnect_initial_delay_s, "
+                f"got {reconnect_max_delay_s}"
+            )
+        if reconnect_jitter_s < 0:
+            raise ValueError(
+                f"reconnect_jitter_s must be >= 0, got {reconnect_jitter_s}"
+            )
+        self._host = host
+        self._port = port
+        self._connect_timeout = connect_timeout
+        self._initial_delay_s = reconnect_initial_delay_s
+        self._backoff_multiplier = reconnect_backoff_multiplier
+        self._max_delay_s = reconnect_max_delay_s
+        self._jitter_s = reconnect_jitter_s
+        self._lock = Lock()
+        self._stop_event = Event()
+        self._need_connect = Event()
+        self._need_connect.set()
+        self._sock: socket.socket | None = None
+        self._stream: IO[str] | None = None
+        self._current_delay_s = reconnect_initial_delay_s
+        self._connect_attempts = 0
+        self._reconnects = 0
+        self._dropped_results = 0
+        self._dropped_since_down = 0
+        self._last_backoff_s = 0.0
+        self._ever_connected = False
+        self._down_logged = False
+        self._connector = Thread(
+            target=self._run_connector, name="tcp-emitter-connector", daemon=True
+        )
+        self._connector.start()
+
+    def stats(self) -> TCPSocketEmitterStats:
+        with self._lock:
+            return TCPSocketEmitterStats(
+                connected=self._stream is not None,
+                connect_attempts=self._connect_attempts,
+                reconnects=self._reconnects,
+                dropped_results=self._dropped_results,
+                last_backoff_s=self._last_backoff_s,
+            )
 
     def emit(self, result: PipelineResult) -> None:
-        self._stream.write(json.dumps(pipeline_result_to_payload(result)) + "\n")
-        self._stream.flush()
+        with self._lock:
+            stream = self._stream
+            if stream is None:
+                self._dropped_results += 1
+                self._dropped_since_down += 1
+                return
+        try:
+            stream.write(json.dumps(pipeline_result_to_payload(result)) + "\n")
+            stream.flush()
+        except (OSError, ValueError):
+            self._handle_send_failure(stream)
 
     def close(self) -> None:
+        self._stop_event.set()
+        self._need_connect.set()
+        self._connector.join(timeout=2.0)
+        with self._lock:
+            self._teardown_locked()
+
+    def _run_connector(self) -> None:
+        while not self._stop_event.is_set():
+            if not self._need_connect.wait(timeout=0.2):
+                continue
+            if self._stop_event.is_set():
+                return
+            if self._attempt_connect():
+                continue
+            self._stop_event.wait(self._advance_backoff())
+
+    def _attempt_connect(self) -> bool:
+        with self._lock:
+            self._connect_attempts += 1
         try:
-            self._stream.close()
-        finally:
-            self._sock.close()
+            sock = socket.create_connection(
+                (self._host, self._port), timeout=self._connect_timeout
+            )
+        except OSError as exc:
+            with self._lock:
+                should_log = not self._down_logged
+                self._down_logged = True
+            if should_log:
+                logger.warning(
+                    "telemetry endpoint %s:%s unreachable (%s); retrying with backoff",
+                    self._host,
+                    self._port,
+                    exc,
+                )
+            return False
+        for level, option in (
+            (socket.IPPROTO_TCP, socket.TCP_NODELAY),
+            (socket.SOL_SOCKET, socket.SO_KEEPALIVE),
+        ):
+            try:
+                sock.setsockopt(level, option, 1)
+            except OSError:
+                pass
+        stream = sock.makefile("w", encoding="utf-8", newline="\n")
+        with self._lock:
+            self._sock = sock
+            self._stream = stream
+            if self._ever_connected:
+                self._reconnects += 1
+            self._ever_connected = True
+            self._current_delay_s = self._initial_delay_s
+            self._last_backoff_s = 0.0
+            dropped_while_down = self._dropped_since_down
+            self._dropped_since_down = 0
+            self._down_logged = False
+            self._need_connect.clear()
+        logger.info(
+            "telemetry connected to %s:%s (%d results dropped while down)",
+            self._host,
+            self._port,
+            dropped_while_down,
+        )
+        return True
+
+    def _advance_backoff(self) -> float:
+        with self._lock:
+            delay = self._current_delay_s
+            if self._jitter_s > 0:
+                delay += random.uniform(0.0, self._jitter_s)
+            self._last_backoff_s = delay
+            self._current_delay_s = min(
+                self._current_delay_s * self._backoff_multiplier, self._max_delay_s
+            )
+            return delay
+
+    def _handle_send_failure(self, stream: IO[str]) -> None:
+        with self._lock:
+            self._dropped_results += 1
+            self._dropped_since_down += 1
+            lost_current = self._stream is stream
+            if lost_current:
+                self._teardown_locked()
+                self._down_logged = True
+                self._need_connect.set()
+        if lost_current:
+            logger.warning(
+                "telemetry connection to %s:%s lost", self._host, self._port
+            )
+
+    def _teardown_locked(self) -> None:
+        stream, sock = self._stream, self._sock
+        self._stream = None
+        self._sock = None
+        if stream is not None:
+            try:
+                stream.close()
+            except (OSError, ValueError):
+                pass
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
 
 
 class LiveDashboardEmitter:
