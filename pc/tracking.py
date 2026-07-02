@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from typing import Sequence
 from urllib import request
 
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
+_MODEL_DOWNLOAD_TIMEOUT_S = 30.0
+_DOWNLOAD_CHUNK_BYTES = 64 * 1024
 
 _MODEL_SPECS = {
     0: (
@@ -27,7 +32,53 @@ _MODEL_SPECS = {
 }
 
 
-def _ensure_pose_model(*, model_complexity: int, model_path: str | None) -> Path:
+def _download_model(url: str, target: Path, *, timeout_s: float) -> None:
+    """Download `url` to `target` atomically.
+
+    Streams to a `<name>.part` file in the same directory and renames it
+    into place only after the full body has been read, so an interrupted
+    download never leaves a file a later run would mistake for a cached
+    model. Any failure (connect timeout, HTTP error, partial read, empty
+    body) removes the partial file and raises a RuntimeError naming the
+    URL and destination.
+    """
+    temp_path = target.with_name(target.name + ".part")
+    logger.info(
+        "downloading pose model %s from %s to %s", target.name, url, target
+    )
+    try:
+        with request.urlopen(url, timeout=timeout_s) as response:
+            bytes_written = 0
+            with temp_path.open("wb") as sink:
+                while True:
+                    chunk = response.read(_DOWNLOAD_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    sink.write(chunk)
+                    bytes_written += len(chunk)
+            if bytes_written == 0:
+                raise ValueError("server returned an empty body")
+        temp_path.replace(target)
+    except Exception as exc:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("could not remove partial download %s", temp_path)
+        raise RuntimeError(
+            f"could not download pose model from {url} to {target}: {exc}"
+        ) from exc
+    logger.info(
+        "pose model %s downloaded (%d bytes)", target.name, target.stat().st_size
+    )
+
+
+def _ensure_pose_model(
+    *,
+    model_complexity: int,
+    model_path: str | None,
+    download_timeout_s: float = _MODEL_DOWNLOAD_TIMEOUT_S,
+    models_dir: Path | None = None,
+) -> Path:
     if model_path is not None:
         resolved = Path(model_path).expanduser().resolve()
         if not resolved.exists():
@@ -40,17 +91,15 @@ def _ensure_pose_model(*, model_complexity: int, model_path: str | None) -> Path
         )
 
     filename, url = _MODEL_SPECS[model_complexity]
-    target = Path(__file__).resolve().parents[1] / "models" / filename
-    if target.exists():
+    directory = models_dir or Path(__file__).resolve().parents[1] / "models"
+    target = directory / filename
+    # A zero-byte file is a leftover from an interrupted download made by
+    # older versions of this module; treat it as missing and re-download.
+    if target.exists() and target.stat().st_size > 0:
         return target
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        request.urlretrieve(url, target)
-    except Exception as exc:  # pragma: no cover - network-dependent path
-        raise RuntimeError(
-            f"could not download pose model from {url} to {target}"
-        ) from exc
+    _download_model(url, target, timeout_s=download_timeout_s)
     return target
 
 
@@ -71,6 +120,7 @@ class PoseTracker:
         min_tracking_confidence: float = 0.5,
         model_complexity: int = 0,
         model_path: str | None = None,
+        download_timeout_s: float = _MODEL_DOWNLOAD_TIMEOUT_S,
     ) -> None:
         try:
             import cv2
@@ -95,6 +145,7 @@ class PoseTracker:
         resolved_model = _ensure_pose_model(
             model_complexity=model_complexity,
             model_path=model_path,
+            download_timeout_s=download_timeout_s,
         )
         options = PoseLandmarkerOptions(
             base_options=BaseOptions(model_asset_path=str(resolved_model)),
