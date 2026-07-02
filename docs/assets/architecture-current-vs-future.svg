@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="860" viewBox="0 0 1400 860">
+  <defs>
+    <style>
+      .bg { fill: #f8fafc; }
+      .title { font: 700 34px Helvetica, Arial, sans-serif; fill: #0f172a; }
+      .section { font: 700 24px Helvetica, Arial, sans-serif; fill: #0f172a; }
+      .body { font: 500 18px Helvetica, Arial, sans-serif; fill: #334155; }
+      .small { font: 500 16px Helvetica, Arial, sans-serif; fill: #475569; }
+      .box-title { font: 700 20px Helvetica, Arial, sans-serif; fill: #0f172a; }
+      .box-body { font: 500 16px Helvetica, Arial, sans-serif; fill: #334155; }
+      .current { fill: #dbeafe; stroke: #2563eb; stroke-width: 2; }
+      .future { fill: #dcfce7; stroke: #16a34a; stroke-width: 2; }
+      .bridge { fill: #fef3c7; stroke: #d97706; stroke-width: 2; }
+      .note { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; }
+      .arrow-current { stroke: #2563eb; stroke-width: 4; fill: none; }
+      .arrow-future { stroke: #16a34a; stroke-width: 4; fill: none; }
+    </style>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb" />
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#16a34a" />
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1400" height="860" rx="24" />
+
+  <text class="title" x="60" y="70">Current prototype boundary vs future 802.11bf-oriented product boundary</text>
+  <text class="body" x="60" y="105">The silicon changes later. The capture-to-inference contract is the part worth protecting now.</text>
+
+  <text class="section" x="60" y="165">Current repo (implemented or scaffolded today)</text>
+
+  <rect class="current" x="60" y="210" width="240" height="120" rx="18" />
+  <text class="box-title" x="90" y="255">2.4 GHz packet source</text>
+  <text class="box-body" x="90" y="285">AP beacons, data traffic,</text>
+  <text class="box-body" x="90" y="308">or future dedicated emitter</text>
+
+  <rect class="current" x="360" y="210" width="250" height="120" rx="18" />
+  <text class="box-title" x="390" y="255">ESP32-S3 capture node</text>
+  <text class="box-body" x="390" y="285">Wi-Fi RX, CSI callback,</text>
+  <text class="box-body" x="390" y="308">amp/phase extraction</text>
+
+  <rect class="bridge" x="670" y="210" width="220" height="120" rx="18" />
+  <text class="box-title" x="712" y="255">CSV / UART bridge</text>
+  <text class="box-body" x="700" y="285">timestamp, RSSI, channel,</text>
+  <text class="box-body" x="700" y="308">subcarriers, amp_i, phase_i</text>
+
+  <rect class="current" x="950" y="210" width="240" height="120" rx="18" />
+  <text class="box-title" x="995" y="255">Jetson Nano runtime</text>
+  <text class="box-body" x="980" y="285">parser, windows, breath DSP,</text>
+  <text class="box-body" x="980" y="308">motion baseline, emitters</text>
+
+  <path class="arrow-current" d="M300 270 L360 270" marker-end="url(#arrow-blue)" />
+  <path class="arrow-current" d="M610 270 L670 270" marker-end="url(#arrow-blue)" />
+  <path class="arrow-current" d="M890 270 L950 270" marker-end="url(#arrow-blue)" />
+
+  <rect class="note" x="60" y="370" width="1130" height="85" rx="18" />
+  <text class="body" x="85" y="408">What is real here: CSI capture scaffold, stable CSV contract, synthetic validation, classical DSP baselines.</text>
+  <text class="small" x="85" y="436">What is not real yet: native 802.11bf sensing control/feedback, production transport, fully validated live deployment.</text>
+
+  <text class="section" x="60" y="540">Future production direction (what 802.11bf makes easier)</text>
+
+  <rect class="future" x="60" y="585" width="250" height="140" rx="18" />
+  <text class="box-title" x="92" y="632">Sensing-aware WLAN radio</text>
+  <text class="box-body" x="92" y="662">802.11bf-capable chipset</text>
+  <text class="box-body" x="92" y="685">with standardized sensing hooks</text>
+
+  <rect class="future" x="370" y="585" width="280" height="140" rx="18" />
+  <text class="box-title" x="405" y="632">Sensing setup and feedback</text>
+  <text class="box-body" x="405" y="662">capability exchange, session setup,</text>
+  <text class="box-body" x="405" y="685">reporting rather than ad hoc CSV</text>
+
+  <rect class="future" x="710" y="585" width="240" height="140" rx="18" />
+  <text class="box-title" x="747" y="632">Edge NPU runtime</text>
+  <text class="box-body" x="742" y="662">distilled FM or task head,</text>
+  <text class="box-body" x="742" y="685">low-latency local inference</text>
+
+  <rect class="future" x="1010" y="585" width="250" height="140" rx="18" />
+  <text class="box-title" x="1065" y="632">Local predictions only</text>
+  <text class="box-body" x="1040" y="662">alerts, trends, metrics,</text>
+  <text class="box-body" x="1040" y="685">raw CSI stays in the room</text>
+
+  <path class="arrow-future" d="M310 655 L370 655" marker-end="url(#arrow-green)" />
+  <path class="arrow-future" d="M650 655 L710 655" marker-end="url(#arrow-green)" />
+  <path class="arrow-future" d="M950 655 L1010 655" marker-end="url(#arrow-green)" />
+
+  <text class="small" x="60" y="800">Design principle: keep the sensing boundary stable even when the capture chip and inference chip change.</text>
+</svg>

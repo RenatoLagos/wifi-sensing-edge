@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760">
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .title { font: 700 34px Helvetica, Arial, sans-serif; fill: #0f172a; }
+      .body { font: 500 18px Helvetica, Arial, sans-serif; fill: #334155; }
+      .axis { stroke: #475569; stroke-width: 3; }
+      .grid { stroke: #e2e8f0; stroke-width: 2; }
+      .band { fill: #dcfce7; }
+      .curve { fill: none; stroke: #2563eb; stroke-width: 5; }
+      .peak { stroke: #dc2626; stroke-width: 3; stroke-dasharray: 8 6; }
+      .label { font: 700 20px Helvetica, Arial, sans-serif; fill: #111827; }
+      .small { font: 500 16px Helvetica, Arial, sans-serif; fill: #475569; }
+      .note { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1400" height="760" rx="24" />
+  <text class="title" x="60" y="70">Conceptual spectrum for the breathing estimator</text>
+  <text class="body" x="60" y="105">This is not measured repo output. It is the shape the algorithm is trying to recover after detrending, bandpass filtering, and Welch PSD.</text>
+
+  <rect class="band" x="310" y="180" width="560" height="420" rx="14" />
+  <line class="grid" x1="170" y1="250" x2="1230" y2="250" />
+  <line class="grid" x1="170" y1="350" x2="1230" y2="350" />
+  <line class="grid" x1="170" y1="450" x2="1230" y2="450" />
+  <line class="grid" x1="170" y1="550" x2="1230" y2="550" />
+  <line class="axis" x1="170" y1="600" x2="1230" y2="600" />
+  <line class="axis" x1="170" y1="150" x2="170" y2="600" />
+
+  <text class="small" x="140" y="160">power</text>
+  <text class="small" x="1240" y="625">frequency (Hz)</text>
+  <text class="small" x="292" y="635">0.1</text>
+  <text class="small" x="572" y="635">0.3</text>
+  <text class="small" x="852" y="635">0.5</text>
+  <text class="small" x="1110" y="635">0.8</text>
+
+  <path class="curve" d="M170 570 C230 565, 260 560, 300 555 C360 545, 430 520, 500 500 C560 470, 600 355, 620 250 C640 180, 690 210, 730 290 C780 390, 840 470, 920 520 C1000 555, 1120 565, 1230 570" />
+  <line class="peak" x1="590" y1="160" x2="590" y2="600" />
+
+  <text class="label" x="350" y="205">Breathing search band: 0.1-0.5 Hz</text>
+  <text class="small" x="350" y="228">Equivalent to 6-30 breaths per minute</text>
+
+  <rect class="note" x="930" y="180" width="300" height="130" rx="18" />
+  <text class="label" x="955" y="220">Dominant peak</text>
+  <text class="body" x="955" y="252">0.30 Hz = 18 BPM</text>
+  <text class="small" x="955" y="282">The estimator looks for a stable,</text>
+  <text class="small" x="955" y="304">consensus-backed peak like this.</text>
+
+  <rect class="note" x="930" y="360" width="300" height="160" rx="18" />
+  <text class="label" x="955" y="400">Why long windows?</text>
+  <text class="small" x="955" y="432">Low frequencies need long time support.</text>
+  <text class="small" x="955" y="454">At 0.1 Hz, one cycle lasts 10 seconds.</text>
+  <text class="small" x="955" y="476">That is why the repo uses roughly</text>
+  <text class="small" x="955" y="498">30-second breathing windows.</text>
+
+  <text class="small" x="170" y="690">Interpretation: out-of-band energy is suppressed, then the in-band peak is scored and cross-checked across subcarriers.</text>
+</svg>

@@ -26,6 +26,7 @@ data/captures/
 
 models/checkpoints/
 models/exports/
+models/*.task
 *.pth
 *.pt
 *.onnx
@@ -59,3 +60,6 @@ node_modules/
 
 docs/private/
 notes/private/
+
+# Local tooling metadata
+.atl/

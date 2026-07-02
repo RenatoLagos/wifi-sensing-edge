@@ -8,6 +8,7 @@ Examples:
     python -m scripts.demo_pipeline --mode walking --duration 20
     python -m scripts.demo_pipeline --emitter stdout --no-realtime
     python -m scripts.demo_pipeline --emitter jsonl > stream.jsonl
+    python -m scripts.demo_pipeline --source serial --serial-port /dev/ttyUSB0 --emitter tcp --tcp-host 192.168.1.50
     python -m scripts.demo_pipeline --source serial --serial-port /dev/ttyUSB0
     python -m scripts.demo_pipeline --source capture --capture-file data/clean_capture_64.csv --rate 12.5 --emitter stdout
 """
@@ -15,6 +16,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 import sys
 import time
@@ -25,8 +27,11 @@ from jetson.pipeline import (
     LiveDashboardEmitter,
     Pipeline,
     StdoutEmitter,
+    TCPSocketEmitter,
 )
 from scripts import csi_simulator
+
+logger = logging.getLogger(__name__)
 
 
 def _iter_simulator_frames(
@@ -121,20 +126,30 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument(
         "--emitter",
-        choices=["dashboard", "stdout", "jsonl"],
+        choices=["dashboard", "stdout", "jsonl", "tcp"],
         default="dashboard",
     )
+    p.add_argument("--tcp-host", type=str, default=None)
+    p.add_argument("--tcp-port", type=int, default=8765)
+    p.add_argument("--tcp-timeout", type=float, default=5.0)
     p.add_argument(
         "--no-realtime",
         action="store_true",
         help="run as fast as possible (default: dashboard paces to wall clock)",
     )
     args = p.parse_args(argv)
+    logging.basicConfig(
+        level=logging.INFO,
+        stream=sys.stderr,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
 
     if args.source == "serial" and not args.serial_port:
         p.error("--serial-port is required when --source serial")
     if args.source == "capture" and not args.capture_file:
         p.error("--capture-file is required when --source capture")
+    if args.emitter == "tcp" and not args.tcp_host:
+        p.error("--tcp-host is required when --emitter tcp")
 
     pipeline = Pipeline(
         sample_rate_hz=args.rate,
@@ -175,13 +190,25 @@ def main(argv: list[str] | None = None) -> int:
                     dash.emit(result)
         return 0
 
-    emitter = StdoutEmitter() if args.emitter == "stdout" else JSONLinesEmitter()
+    if args.emitter == "stdout":
+        emitter = StdoutEmitter()
+    elif args.emitter == "jsonl":
+        emitter = JSONLinesEmitter()
+    else:
+        emitter = TCPSocketEmitter(
+            host=args.tcp_host,
+            port=args.tcp_port,
+            connect_timeout=args.tcp_timeout,
+        )
     try:
         for frame in frames:
             result = pipeline.feed(frame)
             if result is not None:
                 emitter.emit(result)
     finally:
+        stats_fn = getattr(emitter, "stats", None)
+        if callable(stats_fn):
+            logger.info("emitter stats: %s", stats_fn())
         emitter.close()
     return 0
 
