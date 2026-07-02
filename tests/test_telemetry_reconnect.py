@@ -195,6 +195,62 @@ def test_emitter_reconnects_after_connection_loss():
     assert stats.dropped_results >= 1
 
 
+def test_connect_success_after_close_is_discarded(monkeypatch):
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        host, port = listener.getsockname()
+        emitter_holder: list[TCPSocketEmitter] = []
+        handed_over: list[socket.socket] = []
+        real_create_connection = socket.create_connection
+
+        def _stop_then_connect(address, timeout=None):
+            deadline = time.monotonic() + 2.0
+            while not emitter_holder and time.monotonic() < deadline:
+                time.sleep(0.001)
+            # Simulate close() winning the race against an in-flight connect.
+            emitter_holder[0]._stop_event.set()
+            sock = real_create_connection(address, timeout=timeout)
+            handed_over.append(sock)
+            return sock
+
+        monkeypatch.setattr(socket, "create_connection", _stop_then_connect)
+        emitter = TCPSocketEmitter(
+            host=host,
+            port=port,
+            connect_timeout=0.5,
+            reconnect_initial_delay_s=0.01,
+            reconnect_backoff_multiplier=2.0,
+            reconnect_max_delay_s=0.05,
+            reconnect_jitter_s=0.0,
+        )
+        emitter_holder.append(emitter)
+        try:
+            assert _wait_until(
+                lambda: bool(handed_over) and handed_over[0].fileno() == -1
+            )
+            stats = emitter.stats()
+        finally:
+            emitter.close()
+        assert not stats.connected
+        assert stats.connect_attempts == 1
+        assert stats.reconnects == 0
+        assert not emitter._connector.is_alive()
+
+
+def test_close_stops_connector_thread():
+    emitter = TCPSocketEmitter(
+        host="127.0.0.1",
+        port=_free_port(),
+        connect_timeout=0.5,
+        reconnect_initial_delay_s=0.05,
+        reconnect_backoff_multiplier=2.0,
+        reconnect_max_delay_s=0.2,
+        reconnect_jitter_s=0.0,
+    )
+    assert _wait_until(lambda: emitter.stats().connect_attempts >= 1)
+    emitter.close()
+    assert not emitter._connector.is_alive()
+
+
 def test_server_accepts_next_client_after_disconnect():
     port = _free_port()
     samples = []

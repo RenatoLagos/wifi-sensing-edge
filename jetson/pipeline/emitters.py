@@ -95,7 +95,9 @@ class TCPSocketEmitter:
     backoff between failed attempts, so `emit` never connects and never
     blocks: results produced while disconnected are dropped and counted
     (stale live telemetry has no replay value). Link transitions are logged
-    once per state change, never per dropped result.
+    once per state change, never per dropped result. `close` blocks for up
+    to `connect_timeout + 1.0` seconds so an in-flight connect attempt can
+    finish and be discarded cleanly.
     """
 
     def __init__(
@@ -180,7 +182,7 @@ class TCPSocketEmitter:
     def close(self) -> None:
         self._stop_event.set()
         self._need_connect.set()
-        self._connector.join(timeout=2.0)
+        self._connector.join(timeout=self._connect_timeout + 1.0)
         with self._lock:
             self._teardown_locked()
 
@@ -192,6 +194,8 @@ class TCPSocketEmitter:
                 return
             if self._attempt_connect():
                 continue
+            if self._stop_event.is_set():
+                return
             self._stop_event.wait(self._advance_backoff())
 
     def _attempt_connect(self) -> bool:
@@ -223,17 +227,33 @@ class TCPSocketEmitter:
                 pass
         stream = sock.makefile("w", encoding="utf-8", newline="\n")
         with self._lock:
-            self._sock = sock
-            self._stream = stream
-            if self._ever_connected:
-                self._reconnects += 1
-            self._ever_connected = True
-            self._current_delay_s = self._initial_delay_s
-            self._last_backoff_s = 0.0
-            dropped_while_down = self._dropped_since_down
-            self._dropped_since_down = 0
-            self._down_logged = False
-            self._need_connect.clear()
+            if self._stop_event.is_set():
+                # close() raced this in-flight attempt: discard the socket
+                # instead of repopulating a closed emitter.
+                discard = True
+            else:
+                discard = False
+                self._sock = sock
+                self._stream = stream
+                if self._ever_connected:
+                    self._reconnects += 1
+                self._ever_connected = True
+                self._current_delay_s = self._initial_delay_s
+                self._last_backoff_s = 0.0
+                dropped_while_down = self._dropped_since_down
+                self._dropped_since_down = 0
+                self._down_logged = False
+                self._need_connect.clear()
+        if discard:
+            try:
+                stream.close()
+            except (OSError, ValueError):
+                pass
+            try:
+                sock.close()
+            except OSError:
+                pass
+            return False
         logger.info(
             "telemetry connected to %s:%s (%d results dropped while down)",
             self._host,
