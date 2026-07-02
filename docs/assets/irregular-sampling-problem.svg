@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760">
+  <defs>
+    <style>
+      .bg { fill: #f8fafc; }
+      .title { font: 700 34px Helvetica, Arial, sans-serif; fill: #0f172a; }
+      .body { font: 500 18px Helvetica, Arial, sans-serif; fill: #334155; }
+      .label { font: 700 22px Helvetica, Arial, sans-serif; fill: #0f172a; }
+      .small { font: 500 16px Helvetica, Arial, sans-serif; fill: #475569; }
+      .axis { stroke: #64748b; stroke-width: 3; }
+      .ideal { fill: #2563eb; }
+      .real { fill: #ef4444; }
+      .gap { fill: #fee2e2; stroke: #ef4444; stroke-width: 2; stroke-dasharray: 8 6; }
+      .note { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1400" height="760" rx="24" />
+  <text class="title" x="60" y="70">Why packet irregularity matters for DSP on live CSI streams</text>
+  <text class="body" x="60" y="105">The current pipeline assumes a configured sample rate. That works best when arrivals are close to uniform.</text>
+
+  <text class="label" x="60" y="180">Idealized lab assumption</text>
+  <text class="small" x="60" y="208">Packets arrive nearly every 10 ms, so a fixed 100 Hz model is a good approximation.</text>
+  <line class="axis" x1="120" y1="300" x2="1280" y2="300" />
+  <text class="small" x="1230" y="330">time</text>
+  <circle class="ideal" cx="170" cy="300" r="10" />
+  <circle class="ideal" cx="260" cy="300" r="10" />
+  <circle class="ideal" cx="350" cy="300" r="10" />
+  <circle class="ideal" cx="440" cy="300" r="10" />
+  <circle class="ideal" cx="530" cy="300" r="10" />
+  <circle class="ideal" cx="620" cy="300" r="10" />
+  <circle class="ideal" cx="710" cy="300" r="10" />
+  <circle class="ideal" cx="800" cy="300" r="10" />
+  <circle class="ideal" cx="890" cy="300" r="10" />
+  <circle class="ideal" cx="980" cy="300" r="10" />
+  <circle class="ideal" cx="1070" cy="300" r="10" />
+  <circle class="ideal" cx="1160" cy="300" r="10" />
+  <text class="small" x="160" y="265">uniform delta_t</text>
+
+  <text class="label" x="60" y="440">Real deployment capture</text>
+  <text class="small" x="60" y="468">Traffic bursts, missed packets, and jitter make the actual timeline uneven even if the code still thinks in fixed frame counts.</text>
+  <line class="axis" x1="120" y1="560" x2="1280" y2="560" />
+  <text class="small" x="1230" y="590">time</text>
+  <circle class="real" cx="170" cy="560" r="10" />
+  <circle class="real" cx="230" cy="560" r="10" />
+  <circle class="real" cx="360" cy="560" r="10" />
+  <circle class="real" cx="395" cy="560" r="10" />
+  <circle class="real" cx="520" cy="560" r="10" />
+  <rect class="gap" x="560" y="530" width="120" height="60" rx="16" />
+  <text class="small" x="582" y="566">missing packets</text>
+  <circle class="real" cx="720" cy="560" r="10" />
+  <circle class="real" cx="765" cy="560" r="10" />
+  <circle class="real" cx="785" cy="560" r="10" />
+  <circle class="real" cx="930" cy="560" r="10" />
+  <circle class="real" cx="1010" cy="560" r="10" />
+  <circle class="real" cx="1180" cy="560" r="10" />
+  <text class="small" x="720" y="525">burst</text>
+  <text class="small" x="920" y="525">jitter</text>
+
+  <rect class="note" x="60" y="650" width="1270" height="65" rx="18" />
+  <text class="body" x="90" y="690">Consequence: spectral methods, window lengths, and threshold logic become biased if timestamp irregularity is ignored. This is why live-capture validation matters even when the simulator looks perfect.</text>
+</svg>

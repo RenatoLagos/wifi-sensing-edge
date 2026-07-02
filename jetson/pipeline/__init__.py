@@ -3,6 +3,8 @@ from jetson.pipeline.emitters import (
     JSONLinesEmitter,
     LiveDashboardEmitter,
     StdoutEmitter,
+    TCPSocketEmitter,
+    TCPSocketEmitterStats,
 )
 from jetson.pipeline.orchestrator import Pipeline, PipelineResult
 from jetson.pipeline.window import SlidingWindow
@@ -15,4 +17,6 @@ __all__ = [
     "PipelineResult",
     "SlidingWindow",
     "StdoutEmitter",
+    "TCPSocketEmitter",
+    "TCPSocketEmitterStats",
 ]
