@@ -57,10 +57,6 @@ def _history_with_samples() -> SignalHistory:
     return history
 
 
-class _NoPoseTracker:
-    connections: tuple[tuple[int, int], ...] = ()
-
-
 def _no_pose_track() -> PoseTrack:
     return PoseTrack(
         detected=False,
@@ -138,7 +134,7 @@ def test_privacy_hint_stays_on_canvas_in_both_panel_outcomes():
             _render_frame(
                 frame,
                 track=_no_pose_track(),
-                tracker=_NoPoseTracker(),
+                connections=(),
                 fused=None,
                 status=_status(),
                 privacy_mode="silhouette",

@@ -8,15 +8,29 @@ overlay using silhouette or blur modes.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import logging
+from threading import Event, Thread
 import time
+from typing import Sequence
 
 import numpy as np
 
 from .fusion import FusedTelemetry, TelemetryBuffer
 from .history import SignalHistory, to_polyline
+from .loops import (
+    CaptureFrame,
+    InferenceResult,
+    LatestSlot,
+    PerfSnapshot,
+    RateMeter,
+    capture_loop,
+    inference_loop,
+)
 from .telemetry import TelemetryServer, TelemetryServerStatus
 from .tracking import PoseTrack, PoseTracker
+
+logger = logging.getLogger(__name__)
 
 _MOTION_STATE_COLORS: dict[str, tuple[int, int, int]] = {
     "idle": (150, 150, 150),
@@ -61,13 +75,14 @@ def _render_frame(
     frame_bgr: np.ndarray,
     *,
     track: PoseTrack,
-    tracker: PoseTracker,
+    connections: Sequence[tuple[int, int]],
     fused: FusedTelemetry | None,
     status: TelemetryServerStatus,
     privacy_mode: str,
     history: SignalHistory,
     show_charts: bool,
     chart_panel_height: int,
+    perf: PerfSnapshot | None = None,
 ) -> np.ndarray:
     cv2 = _load_cv2()
     height, width = frame_bgr.shape[:2]
@@ -88,7 +103,7 @@ def _render_frame(
             canvas[person_mask] = accent[person_mask]
 
     if track.detected:
-        for start_idx, end_idx in tracker.connections:
+        for start_idx, end_idx in connections:
             if start_idx >= len(track.landmarks) or end_idx >= len(track.landmarks):
                 continue
             x0, y0, v0 = track.landmarks[start_idx]
@@ -133,13 +148,21 @@ def _render_frame(
             [
                 f"breath: {breath}  confidence: {conf}",
                 f"motion: {motion}  score: {motion_score}",
-                f"alignment: age {fused.age_ms:5.1f} ms  skew {fused.skew_ms:5.1f} ms",
+                f"alignment: age {fused.age_ms:5.1f} ms  "
+                f"frame skew {fused.skew_ms:5.1f} ms",
             ]
         )
     if track.detected:
         lines.append(f"pose lock: yes  confidence: {track.confidence:0.2f}")
     else:
         lines.append("pose lock: no")
+    if perf is not None:
+        age_txt = "--" if perf.pose_age_ms is None else f"{perf.pose_age_ms:5.0f}"
+        lines.append(
+            f"perf: capture {perf.capture_fps:4.1f} fps  "
+            f"inference {perf.inference_fps:4.1f} fps  "
+            f"render {perf.render_fps:4.1f} fps  pose age {age_txt} ms"
+        )
 
     y = 48
     for idx, line in enumerate(lines):
@@ -299,6 +322,16 @@ def _put_chart_text(
 
 
 def run_visualizer(config: VisualizerConfig) -> int:
+    """Run the capture -> inference -> render pipeline.
+
+    Capture and pose inference run on dedicated background threads, each
+    handing its output to the next stage through a `LatestSlot`
+    (freshest-wins, no growing queues) so a slow pose model only slows the
+    inference stage - it never throttles the render loop. Rendering stays
+    on this thread because `cv2.imshow` requires the main thread on some
+    platforms. Any stage failure fails fast: it logs an ERROR, signals
+    every other stage to stop, and the visualizer exits cleanly.
+    """
     cv2 = _load_cv2()
 
     buffer = TelemetryBuffer()
@@ -308,41 +341,155 @@ def run_visualizer(config: VisualizerConfig) -> int:
         on_sample=buffer.add,
     )
     history = SignalHistory()
-    tracker = PoseTracker(model_path=config.pose_model)
     if config.video_file is not None:
         capture = cv2.VideoCapture(config.video_file)
         source_desc = f"video file {config.video_file}"
+        retry_on_failure = False
     else:
         capture = cv2.VideoCapture(config.camera_index)
         capture.set(cv2.CAP_PROP_FRAME_WIDTH, config.width)
         capture.set(cv2.CAP_PROP_FRAME_HEIGHT, config.height)
         source_desc = f"camera index {config.camera_index}"
+        retry_on_failure = True
 
     if not capture.isOpened():
         capture.release()
-        tracker.close()
         raise RuntimeError(f"could not open {source_desc}")
 
-    server.start()
+    stop_event = Event()
+    capture_done = Event()
+    inference_done = Event()
+    frame_slot: LatestSlot[CaptureFrame] = LatestSlot()
+    result_slot: LatestSlot[InferenceResult] = LatestSlot()
+    connections_slot: LatestSlot[tuple[tuple[int, int], ...]] = LatestSlot()
+    capture_rate = RateMeter()
+    inference_rate = RateMeter()
+    render_rate = RateMeter()
+
+    def _read_frame() -> tuple[bool, np.ndarray]:
+        ok, raw = capture.read()
+        if not ok:
+            return False, raw
+        return True, cv2.flip(raw, 1)
+
+    def _capture_thread_body() -> None:
+        # The capture thread owns the capture handle: releasing it here
+        # (never from the main thread) avoids racing release() against a
+        # read() still blocked on the same device.
+        try:
+            capture_loop(
+                read_frame=_read_frame,
+                frame_slot=frame_slot,
+                stop_event=stop_event,
+                capture_done=capture_done,
+                retry_on_failure=retry_on_failure,
+                rate_meter=capture_rate,
+            )
+        finally:
+            capture.release()
+
+    capture_thread = Thread(
+        target=_capture_thread_body,
+        name="visualizer-capture",
+        daemon=True,
+    )
+
+    def _inference_thread_body() -> None:
+        # The pose model download (when not cached) and MediaPipe's video
+        # mode are both handled on this thread only, so the render path
+        # never blocks on either. A setup failure (download, model load)
+        # must fail fast like a run_pose failure: log, stop every stage,
+        # and mark inference done so the render loop can exit.
+        tracker: PoseTracker | None = None
+        try:
+            tracker = PoseTracker(model_path=config.pose_model)
+            active_tracker = tracker
+            connections_slot.put(tuple(active_tracker.connections))
+            inference_loop(
+                frame_slot=frame_slot,
+                result_slot=result_slot,
+                stop_event=stop_event,
+                capture_done=capture_done,
+                inference_done=inference_done,
+                run_pose=lambda frame_bgr, timestamp_ms: active_tracker.process(
+                    frame_bgr, timestamp_ms=timestamp_ms
+                ),
+                rate_meter=inference_rate,
+            )
+        except Exception:
+            logger.exception("inference stage setup failed; stopping pipeline")
+            stop_event.set()
+        finally:
+            inference_done.set()
+            if tracker is not None:
+                tracker.close()
+
+    inference_thread = Thread(
+        target=_inference_thread_body,
+        name="visualizer-inference",
+        daemon=True,
+    )
+
     window_name = "wifi-sensing camera-assisted demo"
-    frames_processed = 0
+    frames_rendered = 0
+    last_result: InferenceResult | None = None
     try:
+        server.start()
+        capture_thread.start()
+        inference_thread.start()
         while True:
-            ok, frame = capture.read()
-            if not ok:
-                if config.video_file is not None:
+            if (
+                config.max_frames is not None
+                and frames_rendered >= config.max_frames
+            ):
+                break
+
+            # Read the done flag BEFORE polling the slot: inference cannot
+            # publish after setting inference_done, so "done and nothing
+            # pending" is race-free in this order.
+            inference_finished = inference_done.is_set()
+            result = result_slot.get()
+            fresh = result is not None
+            if fresh:
+                last_result = result
+            elif inference_finished:
+                # No newer pose can ever arrive - inference drained the
+                # source (EOF) or died. Stop capture too and exit,
+                # regardless of the capture stage's state.
+                stop_event.set()
+                break
+
+            if last_result is None:
+                if stop_event.wait(0.005):
                     break
-                time.sleep(0.01)
                 continue
-            frame = cv2.flip(frame, 1)
-            frame_local_us = time.monotonic_ns() // 1_000
-            track = tracker.process(frame, timestamp_ms=frame_local_us // 1_000)
+
+            if config.headless and not fresh:
+                # No window to keep alive, so re-compositing the same stale
+                # pose is wasted work and would inflate the rendered-frame
+                # count that --max-frames gates on. Wait for a fresh result.
+                if stop_event.wait(0.02):
+                    break
+                continue
+
+            now_us = time.monotonic_ns() // 1_000
             fused = buffer.match(
-                frame_local_us,
+                now_us,
                 max_age_ms=config.max_telemetry_age_ms,
                 max_skew_ms=config.max_fusion_skew_ms,
             )
             if fused is not None:
+                # match() gates freshness on live "now" so telemetry keeps
+                # flowing while pose inference lags, but the displayed skew
+                # must describe the frame actually on screen.
+                fused = replace(
+                    fused,
+                    skew_ms=abs(
+                        fused.aligned_local_us
+                        - last_result.frame.captured_monotonic_us
+                    )
+                    / 1_000.0,
+                )
                 history.append(
                     t_mono=fused.aligned_local_us / 1_000_000.0,
                     breath_bpm=fused.sample.breath_rate_bpm,
@@ -350,41 +497,52 @@ def run_visualizer(config: VisualizerConfig) -> int:
                     motion_score=fused.sample.motion_score,
                     motion_state=fused.sample.motion_state,
                 )
+            perf = PerfSnapshot(
+                capture_fps=capture_rate.rate_hz(),
+                inference_fps=inference_rate.rate_hz(),
+                render_fps=render_rate.rate_hz(),
+                pose_age_ms=(now_us - last_result.processed_monotonic_us) / 1_000.0,
+            )
             rendered = _render_frame(
-                frame,
-                track=track,
-                tracker=tracker,
+                last_result.frame.frame_bgr,
+                track=last_result.track,
+                connections=connections_slot.get(mark_consumed=False) or (),
                 fused=fused,
                 status=server.status(),
                 privacy_mode=config.privacy_mode,
                 history=history,
                 show_charts=config.show_charts,
                 chart_panel_height=config.chart_panel_height,
+                perf=perf,
             )
-            frames_processed += 1
+            frames_rendered += 1
+            render_rate.tick()
             if config.headless:
-                if (
-                    config.max_frames is not None
-                    and frames_processed >= config.max_frames
-                ):
-                    break
                 continue
 
             cv2.imshow(window_name, rendered)
             key = cv2.waitKey(1) & 0xFF
             if key in (27, ord("q")):
+                stop_event.set()
                 break
     finally:
+        stop_event.set()
+        # The capture thread owns the capture handle and releases it on its
+        # way out; the main thread only releases when the thread never ran.
+        if capture_thread.ident is not None:
+            capture_thread.join(timeout=2.0)
+        else:
+            capture.release()
+        if inference_thread.ident is not None:
+            inference_thread.join(timeout=2.0)
         final_status = server.status()
         server.stop()
-        tracker.close()
-        capture.release()
         if not config.headless:
             cv2.destroyAllWindows()
     if config.headless:
         print(
             "headless run complete "
-            f"frames={frames_processed} "
+            f"frames={frames_rendered} "
             f"samples={final_status.samples_received} "
             f"parse_errors={final_status.parse_errors}"
         )

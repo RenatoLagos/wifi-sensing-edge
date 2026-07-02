@@ -1,3 +1,15 @@
+"""Aligns timestamped WiFi telemetry to the visualizer's local clock.
+
+`TelemetryBuffer.match()` selects a sample by age and skew relative to
+whatever query timestamp its caller supplies. The decoupled visualizer
+queries with the render loop's live "now" - not the displayed frame's
+capture time - so freshness gating tracks real time even when pose
+inference lags, and then recomputes the on-screen skew against the
+displayed frame's own capture timestamp. `FusedTelemetry.skew_ms` as
+returned here therefore describes alignment to the query timestamp, not
+necessarily to the frame being shown.
+"""
+
 from __future__ import annotations
 
 from collections import deque
